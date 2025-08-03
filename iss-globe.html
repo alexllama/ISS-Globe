@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISS Tracker Globe</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+            background-color: #000;
+            color: white;
+        }
+        canvas {
+            display: block;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        #title {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 10px rgba(255,255,255,0.8);
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="title">International Space Station Tracker</div>
+    <div id="info">
+        Loading ISS position...
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        // --- SCENE SETUP ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // --- LIGHTING ---
+        const ambientLight = new THREE.AmbientLight(0x444444); // A bit brighter ambient light
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(5, 3, 5);
+        scene.add(directionalLight);
+
+        // --- GLOBE ---
+        const GLOBE_RADIUS = 5;
+        const textureLoader = new THREE.TextureLoader();
+        const earthTexture = textureLoader.load('https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/land_ocean_ice_cloud_2048.jpg', 
+            undefined, 
+            undefined,
+            (err) => {
+                console.error('An error happened while loading the texture.', err);
+                const fallbackMaterial = new THREE.MeshPhongMaterial({ color: 0x0000ff });
+                globe.material = fallbackMaterial;
+            }
+        );
+        const globeGeometry = new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64);
+        const globeMaterial = new THREE.MeshPhongMaterial({
+            map: earthTexture,
+            shininess: 5
+        });
+        const globe = new THREE.Mesh(globeGeometry, globeMaterial);
+        scene.add(globe);
+
+        // --- STARFIELD ---
+        const starGeometry = new THREE.BufferGeometry();
+        const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.05 });
+        const starVertices = [];
+        for (let i = 0; i < 10000; i++) {
+            const x = (Math.random() - 0.5) * 2000;
+            const y = (Math.random() - 0.5) * 2000;
+            const z = (Math.random() - 0.5) * 2000;
+            const dist = x*x + y*y + z*z;
+            if (dist > 100000) { 
+                 starVertices.push(x, y, z);
+            }
+        }
+        starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+        const stars = new THREE.Points(starGeometry, starMaterial);
+        scene.add(stars);
+
+
+        // --- ISS MODEL ---
+        // **CHANGE:** Create a 3D model for the ISS instead of a red dot.
+        const issModel = new THREE.Group();
+        
+        // Main body
+        const bodyMaterial = new THREE.MeshPhongMaterial({ color: 0xcccccc });
+        const bodyGeometry = new THREE.BoxGeometry(0.2, 0.2, 0.4);
+        const mainBody = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        issModel.add(mainBody);
+
+        // Solar panels
+        const panelMaterial = new THREE.MeshPhongMaterial({ color: 0x003366, side: THREE.DoubleSide });
+        const panelGeometry = new THREE.BoxGeometry(1.5, 0.4, 0.02);
+        
+        const leftPanel = new THREE.Mesh(panelGeometry, panelMaterial);
+        leftPanel.position.x = -0.85; // Position relative to the main body
+        issModel.add(leftPanel);
+
+        const rightPanel = new THREE.Mesh(panelGeometry, panelMaterial);
+        rightPanel.position.x = 0.85; // Position relative to the main body
+        issModel.add(rightPanel);
+        
+        // **CHANGE:** Add the ISS model as a child of the globe so it rotates with it.
+        globe.add(issModel);
+
+        camera.position.z = 12;
+
+        // **CHANGE:** Mouse controls for spinning have been removed.
+
+        // --- FUNCTIONS ---
+        /**
+         * Converts latitude and longitude to 3D coordinates on the sphere.
+         * @param {number} latitude - The latitude.
+         * @param {number} longitude - The longitude.
+         * @param {number} radius - The radius of the sphere.
+         * @returns {THREE.Vector3} The 3D position vector.
+         */
+        function latLonToVector3(latitude, longitude, radius) {
+            const latRad = latitude * (Math.PI / 180);
+            const lonRad = -longitude * (Math.PI / 180);
+
+            const x = Math.cos(latRad) * Math.cos(lonRad) * radius;
+            const y = Math.sin(latRad) * radius;
+            const z = Math.cos(latRad) * Math.sin(lonRad) * radius;
+
+            return new THREE.Vector3(x, y, z);
+        }
+
+        /**
+         * Fetches ISS position and updates the marker.
+         */
+        async function updateIssPosition() {
+            try {
+                const response = await fetch('https://api.wheretheiss.at/v1/satellites/25544');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                const { latitude, longitude } = data;
+
+                // **CHANGE:** Calculate a representative altitude.
+                // Real Earth radius: ~6371 km, ISS altitude: ~408 km
+                // Proportional altitude = (408 / 6371) * GLOBE_RADIUS
+                const issAltitude = (408 / 6371) * GLOBE_RADIUS;
+                const issRadius = GLOBE_RADIUS + issAltitude;
+
+                const issPosition = latLonToVector3(parseFloat(latitude), parseFloat(longitude), issRadius);
+                issModel.position.copy(issPosition);
+
+                // Make the ISS model point away from the center of the globe
+                issModel.lookAt(new THREE.Vector3(0, 0, 0));
+
+                // Update info box
+                const infoDiv = document.getElementById('info');
+                infoDiv.innerHTML = `
+                    <b>ISS Position:</b><br>
+                    Latitude: ${parseFloat(latitude).toFixed(4)}<br>
+                    Longitude: ${parseFloat(longitude).toFixed(4)}
+                `;
+
+            } catch (error) {
+                console.error("Could not fetch ISS data:", error);
+                 const infoDiv = document.getElementById('info');
+                 infoDiv.innerHTML = 'Could not fetch ISS data. Retrying...';
+            }
+        }
+
+
+        // --- ANIMATION LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // **CHANGE:** Globe now rotates at a constant slow speed.
+            globe.rotation.y += 0.0005;
+
+            renderer.render(scene, camera);
+        }
+
+        // --- INITIALIZATION ---
+        updateIssPosition(); // Initial fetch
+        setInterval(updateIssPosition, 5000); // Update every 5 seconds
+
+        animate();
+
+        // --- RESIZE HANDLER ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }, false);
+    </script>
+</body>
+</html>
